@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ubilltu"
+version = "0.1.0"
+description = "Official Python client for the ubilltu subscription commerce API."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "ubilltu" }]
+keywords = ["ubilltu", "subscription", "billing", "sdk"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = ["httpx>=0.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://ubilltu.com"
+Repository = "https://github.com/Rock8-Labs/ubilltu-python"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ubilltu"]
