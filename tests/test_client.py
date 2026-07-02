@@ -35,10 +35,11 @@ def test_authed_call_before_login_raises():
 
 
 def test_non_2xx_maps_to_api_error():
+    # The API nests error messages as {"error": {"message": ...}}.
     def handler(request):
         if request.url.path == "/api/v1/auth/login":
             return httpx.Response(200, json={"access_token": "t"})
-        return httpx.Response(402, json={"detail": "no active subscription"})
+        return httpx.Response(402, json={"error": {"message": "no active subscription"}})
 
     client = make_client(handler)
     client.login("a@b.com", "pw")
@@ -48,7 +49,9 @@ def test_non_2xx_maps_to_api_error():
     assert "no active subscription" in str(exc.value)
 
 
-def test_plans_page_parses_trial_days_from_trial_phase():
+def test_plans_page_parses_real_api_shape():
+    # Mirrors the real /plans payload: slug in plan_name, display in
+    # product_name, price/currency inside prices[].
     def handler(request):
         if request.url.path == "/api/v1/auth/login":
             return httpx.Response(200, json={"access_token": "t"})
@@ -57,9 +60,13 @@ def test_plans_page_parses_trial_days_from_trial_phase():
             json={
                 "items": [
                     {
-                        "name": "premium-monthly",
-                        "price": 149,
-                        "currency": "ZAR",
+                        "plan_id": "lite-monthly",
+                        "plan_name": "lite-monthly",
+                        "product_name": "Lite",
+                        "billing_period": "MONTHLY",
+                        "prices": [
+                            {"currency": "ZAR", "amount": 50.0, "billing_period": "MONTHLY"}
+                        ],
                         "phases": [
                             {"phase_type": "TRIAL", "duration_length": 14},
                             {"phase_type": "EVERGREEN"},
@@ -74,10 +81,29 @@ def test_plans_page_parses_trial_days_from_trial_phase():
 
     client = make_client(handler)
     client.login("a@b.com", "pw")
-    plans = client.list_plans()
-    assert plans.items[0].name == "premium-monthly"
-    assert plans.items[0].price == 149
-    assert plans.items[0].trial_days == 14
+    plan = client.list_plans().items[0]
+    assert plan.id == "lite-monthly"       # slug — what you pass to subscribe()
+    assert plan.name == "Lite"             # product display name
+    assert plan.price == 50.0              # pulled from prices[]
+    assert plan.currency == "ZAR"          # pulled from prices[]
+    assert plan.billing_period == "MONTHLY"
+    assert plan.trial_days == 14
+
+
+def test_register_sends_tos_accepted():
+    seen = {}
+
+    def handler(request):
+        seen["req"] = request
+        return httpx.Response(200, json={"access_token": "t"})
+
+    client = make_client(handler)
+    client.register("new@example.com", "password123", name="New User")
+    import json as _json
+
+    body = _json.loads(seen["req"].content)
+    assert body["tos_accepted"] is True
+    assert body["email"] == "new@example.com"
 
 
 def test_change_plan_sends_put_with_body():

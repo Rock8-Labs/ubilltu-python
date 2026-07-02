@@ -82,10 +82,23 @@ class UbilltuClient:
         return self._tokens
 
     def register(
-        self, email: str, password: str, name: Optional[str] = None
+        self,
+        email: str,
+        password: str,
+        name: Optional[str] = None,
+        *,
+        tos_accepted: bool = True,
     ) -> Tokens:
-        """Register a new subscriber; stores the session if tokens are returned."""
-        body: dict = {"email": email, "password": password}
+        """Register a new subscriber; stores the session if tokens are returned.
+
+        The API requires ``tos_accepted=True`` (the caller's user must accept the
+        Terms of Service); it defaults to ``True`` here for convenience.
+        """
+        body: dict = {
+            "email": email,
+            "password": password,
+            "tos_accepted": tos_accepted,
+        }
         if name is not None:
             body["name"] = name
         tokens = Tokens.from_json(self._post("/api/v1/auth/register", body, auth=False))
@@ -289,7 +302,11 @@ class UbilltuClient:
             parsed = resp.json()
             if isinstance(parsed, dict):
                 body = parsed
-                message = parsed.get("detail") or parsed.get("message") or message
+                err = parsed.get("error")
+                if isinstance(err, dict) and err.get("message"):
+                    message = err["message"]
+                else:
+                    message = parsed.get("detail") or parsed.get("message") or message
         except Exception:
             pass
         raise UbilltuApiError(resp.status_code, str(message), body)

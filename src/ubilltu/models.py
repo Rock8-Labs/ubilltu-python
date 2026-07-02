@@ -68,13 +68,23 @@ class Plan:
             (p for p in phases if (p.get("phase_type") or p.get("phaseType")) == "TRIAL"),
             None,
         )
+        # The API returns price/currency inside a `prices[]` array and the
+        # display name in `product_name`; fall back to flat fields for safety.
+        prices = r.get("prices") or []
+        first = prices[0] if prices else {}
         price = r.get("price")
+        if price is None:
+            price = r.get("amount")
+        if price is None:
+            price = first.get("amount")
         return cls(
-            id=str(r.get("id") or r.get("plan_id") or r.get("name") or ""),
-            name=str(r.get("name") or r.get("plan_name") or ""),
-            price=price if price is not None else r.get("amount"),
-            currency=r.get("currency"),
-            billing_period=r.get("billing_period") or r.get("billingPeriod"),
+            id=str(r.get("plan_id") or r.get("id") or r.get("plan_name") or r.get("name") or ""),
+            name=str(r.get("product_name") or r.get("plan_name") or r.get("name") or ""),
+            price=price,
+            currency=r.get("currency") or first.get("currency"),
+            billing_period=r.get("billing_period")
+            or r.get("billingPeriod")
+            or first.get("billing_period"),
             trial_days=(trial.get("duration_length") or trial.get("durationLength"))
             if trial
             else None,
