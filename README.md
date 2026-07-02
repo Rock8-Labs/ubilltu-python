@@ -3,7 +3,8 @@
 Official Python client for the [ubilltu](https://ubilltu.com) subscription commerce API.
 
 ```bash
-pip install ubilltu
+# from git (until published to PyPI):
+pip install "git+https://github.com/Rock8-Labs/ubilltu-python@v0.1.0"
 ```
 
 ## Usage
