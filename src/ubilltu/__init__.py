@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from .client import UbilltuClient
 from .errors import UbilltuApiError, UbilltuAuthError, UbilltuError
-from .models import Invoice, Page, Payment, Plan, Subscription, Tokens
+from .models import (
+    Invoice,
+    Page,
+    Payment,
+    PaymentMethod,
+    Plan,
+    Subscription,
+    Tokens,
+)
 
 __version__ = "0.1.0"
 
@@ -19,4 +27,5 @@ __all__ = [
     "Subscription",
     "Invoice",
     "Payment",
+    "PaymentMethod",
 ]

@@ -7,7 +7,15 @@ from typing import Any, Optional
 import httpx
 
 from .errors import UbilltuApiError, UbilltuAuthError
-from .models import Invoice, Page, Payment, Plan, Subscription, Tokens
+from .models import (
+    Invoice,
+    Page,
+    Payment,
+    PaymentMethod,
+    Plan,
+    Subscription,
+    Tokens,
+)
 
 _DEFAULT_BASE_URL = "https://api.ubilltu.com"
 
@@ -241,6 +249,57 @@ class UbilltuClient:
         if resp.status_code // 100 != 2:
             self._raise(resp)
         return resp.content
+
+    # -- payments ----------------------------------------------------------
+
+    def list_payment_methods(self) -> Page:
+        """List the subscriber's saved payment methods (cards on file)."""
+        return Page.from_json(
+            self._get("/api/v1/payments/methods"), PaymentMethod.from_json
+        )
+
+    def setup_payment_method(
+        self, return_url: str, is_default: bool = False
+    ) -> dict:
+        """Start a zero-amount card-on-file setup.
+
+        Returns ``{"redirect_url": ...}`` — send the customer to that hosted page
+        to enter their card. The card becomes usable once they complete it.
+        """
+        return self._post(
+            "/api/v1/payments/methods/setup",
+            {"return_url": return_url, "is_default": is_default},
+        )
+
+    def signup(self, plan_id: str, return_url: str) -> dict:
+        """Subscribe to a plan AND start payment collection in one call.
+
+        Returns ``{"subscription_id", "payment_id", "redirect_url"}`` — the
+        subscription exists immediately; send the customer to ``redirect_url`` to
+        pay the first invoice on the hosted checkout page.
+        """
+        return self._post(
+            "/api/v1/subscriptions/signup",
+            {"plan_id": plan_id, "return_url": return_url},
+        )
+
+    def checkout(
+        self,
+        amount: float,
+        currency: str = "ZAR",
+        invoice_id: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> dict:
+        """Start a hosted checkout for an amount.
+
+        Returns ``{"payment_id", "redirect_url"}``.
+        """
+        body: dict = {"amount": amount, "currency": currency}
+        if invoice_id:
+            body["invoice_id"] = invoice_id
+        if subscription_id:
+            body["subscription_id"] = subscription_id
+        return self._post("/api/v1/payments/checkout", body)
 
     # -- internals ---------------------------------------------------------
 

@@ -43,6 +43,7 @@ with UbilltuClient("your-store-slug") as client:
 | Plans | `list_plans`, `get_plan` |
 | Subscriptions | `list_subscriptions`, `get_subscription`, `subscribe`, `change_plan`, `preview_change`, `cancel_subscription`, `pause_subscription`, `resume_subscription`, `reactivate_subscription` |
 | Invoices | `list_invoices`, `get_invoice`, `invoice_pdf` |
+| Payments | `list_payment_methods`, `setup_payment_method`, `signup`, `checkout` |
 
 List calls return a `Page` (`items`, `total`, `page`, `per_page`). Typed models
 (`Plan`, `Subscription`, `Invoice`, `Payment`) expose common fields plus `.raw`.

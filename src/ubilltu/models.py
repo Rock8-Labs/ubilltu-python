@@ -98,7 +98,10 @@ class Subscription:
 
     id: str
     plan_name: Optional[str]
+    product_name: Optional[str]
     state: Optional[str]
+    price: Optional[float]
+    currency: Optional[str]
     raw: dict
 
     @classmethod
@@ -109,7 +112,10 @@ class Subscription:
         return cls(
             id=str(sub.get("subscription_id") or sub.get("id") or ""),
             plan_name=sub.get("plan_name") or sub.get("planName"),
+            product_name=sub.get("product_name") or sub.get("productName"),
             state=sub.get("state") or sub.get("status"),
+            price=sub.get("price"),
+            currency=sub.get("currency"),
             raw=r,
         )
 
@@ -154,5 +160,30 @@ class Payment:
             amount=amount if amount is not None else r.get("purchased_amount"),
             currency=r.get("currency"),
             status=r.get("status") or r.get("state"),
+            raw=r,
+        )
+
+
+@dataclass
+class PaymentMethod:
+    """A saved payment method (card on file)."""
+
+    id: str
+    is_default: bool
+    card_brand: Optional[str]
+    card_last4: Optional[str]
+    expiry_month: Optional[int]
+    expiry_year: Optional[int]
+    raw: dict
+
+    @classmethod
+    def from_json(cls, r: dict) -> "PaymentMethod":
+        return cls(
+            id=str(r.get("payment_method_id") or r.get("id") or ""),
+            is_default=bool(r.get("is_default")),
+            card_brand=r.get("card_brand"),
+            card_last4=r.get("card_last_four") or r.get("last4"),
+            expiry_month=r.get("expiry_month"),
+            expiry_year=r.get("expiry_year"),
             raw=r,
         )

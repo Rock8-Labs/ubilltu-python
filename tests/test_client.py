@@ -186,3 +186,63 @@ def test_get_subscription_unwraps_detail_shape():
     assert s.id == "sub_1"
     assert s.plan_name == "premium-monthly"
     assert s.state == "ACTIVE"
+
+
+def test_subscription_surfaces_product_name_and_price():
+    def handler(request):
+        if request.url.path == "/api/v1/auth/login":
+            return httpx.Response(200, json={"access_token": "t"})
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "subscription_id": "sub_1",
+                        "plan_name": "lite-monthly",
+                        "product_name": "Lite",
+                        "state": "ACTIVE",
+                        "price": 50.0,
+                        "currency": "ZAR",
+                    }
+                ],
+                "total": 1,
+                "page": 1,
+                "per_page": 20,
+            },
+        )
+
+    client = make_client(handler)
+    client.login("a@b.com", "pw")
+    s = client.list_subscriptions().items[0]
+    assert s.product_name == "Lite"      # display name (plan_name is the slug)
+    assert s.price == 50.0
+    assert s.currency == "ZAR"
+
+
+def test_signup_and_setup_payment_method():
+    seen = {}
+
+    def handler(request):
+        if request.url.path == "/api/v1/auth/login":
+            return httpx.Response(200, json={"access_token": "t"})
+        seen[request.url.path] = request
+        if request.url.path.endswith("/signup"):
+            return httpx.Response(201, json={
+                "subscription_id": "sub_1", "payment_id": "pay_1",
+                "redirect_url": "https://pay.example/abc",
+            })
+        return httpx.Response(200, json={"redirect_url": "https://pay.example/setup"})
+
+    client = make_client(handler)
+    client.login("a@b.com", "pw")
+
+    su = client.signup("lite-monthly", "https://app/return")
+    assert su["redirect_url"] == "https://pay.example/abc"
+    import json as _json
+    assert _json.loads(seen["/api/v1/subscriptions/signup"].content)["plan_id"] == "lite-monthly"
+
+    setup = client.setup_payment_method("https://app/return", is_default=True)
+    assert setup["redirect_url"] == "https://pay.example/setup"
+    body = _json.loads(seen["/api/v1/payments/methods/setup"].content)
+    assert body["return_url"] == "https://app/return"
+    assert body["is_default"] is True
