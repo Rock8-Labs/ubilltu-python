@@ -103,10 +103,13 @@ class Subscription:
 
     @classmethod
     def from_json(cls, r: dict) -> "Subscription":
+        # The detail endpoint wraps it as {"subscription": {...}, "events": [...]};
+        # the list returns it flat. Unwrap so both shapes parse.
+        sub = r.get("subscription") if isinstance(r.get("subscription"), dict) else r
         return cls(
-            id=str(r.get("subscription_id") or r.get("id") or ""),
-            plan_name=r.get("plan_name") or r.get("planName"),
-            state=r.get("state") or r.get("status"),
+            id=str(sub.get("subscription_id") or sub.get("id") or ""),
+            plan_name=sub.get("plan_name") or sub.get("planName"),
+            state=sub.get("state") or sub.get("status"),
             raw=r,
         )
 

@@ -161,3 +161,28 @@ def test_invoice_pdf_returns_bytes():
     client = make_client(handler)
     client.login("a@b.com", "pw")
     assert client.invoice_pdf("inv_1") == pdf
+
+
+def test_get_subscription_unwraps_detail_shape():
+    # The detail endpoint wraps as {"subscription": {...}, "events": [...]}.
+    def handler(request):
+        if request.url.path == "/api/v1/auth/login":
+            return httpx.Response(200, json={"access_token": "t"})
+        return httpx.Response(
+            200,
+            json={
+                "subscription": {
+                    "subscription_id": "sub_1",
+                    "plan_name": "premium-monthly",
+                    "state": "ACTIVE",
+                },
+                "events": [],
+            },
+        )
+
+    client = make_client(handler)
+    client.login("a@b.com", "pw")
+    s = client.get_subscription("sub_1")
+    assert s.id == "sub_1"
+    assert s.plan_name == "premium-monthly"
+    assert s.state == "ACTIVE"
