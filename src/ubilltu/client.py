@@ -9,7 +9,10 @@ import httpx
 from .errors import UbilltuApiError, UbilltuAuthError
 from .models import (
     AccountBalance,
+    Family,
     Invoice,
+    InviteCode,
+    InvitePreview,
     Page,
     Payment,
     PaymentMethod,
@@ -251,6 +254,46 @@ class UbilltuClient:
         if resp.status_code // 100 != 2:
             self._raise(resp)
         return resp.content
+
+    # -- family ------------------------------------------------------------
+
+    def get_family(self) -> Optional[Family]:
+        """The caller's family view (owner or member), or ``None`` if not in one."""
+        fam = self._get("/api/v1/me/family").get("family")
+        return Family.from_json(fam) if isinstance(fam, dict) else None
+
+    def remove_family_member(self, member_id: str) -> dict:
+        """Owner removes a member from their family."""
+        return self._post(f"/api/v1/me/family/members/{member_id}/remove", {})
+
+    def leave_family(self) -> dict:
+        """Leave the family the caller currently belongs to (members only)."""
+        return self._post("/api/v1/me/family-memberships/leave", {})
+
+    def create_family_invite(self, expires_in_hours: int = 72) -> InviteCode:
+        """Owner generates a fresh invite code (invalidates any existing one)."""
+        r = self._post(
+            "/api/v1/me/family/invite", {"expires_in_hours": expires_in_hours}
+        )
+        return InviteCode.from_json(r.get("data") or {})
+
+    def list_family_invites(self) -> list:
+        """List invite codes for the caller's owned family."""
+        r = self._get("/api/v1/me/family/invites")
+        return [InviteCode.from_json(c) for c in (r.get("data") or [])]
+
+    def revoke_family_invite(self, code: str) -> dict:
+        """Owner revokes an invite code."""
+        return self._post(f"/api/v1/me/family/invite/{code}/revoke", {})
+
+    def accept_family_invite(self, code: str) -> dict:
+        """Redeem an invite code to join a family (identity comes from the session)."""
+        return self._post(f"/api/v1/me/family/invite/{code}/accept", {})
+
+    def validate_invite(self, code: str) -> InvitePreview:
+        """Public preview of an invite code (no auth) — for a join page pre-login."""
+        r = self._request("GET", f"/api/v1/invite/{code}/validate", auth=False)
+        return InvitePreview.from_json(r.get("preview") or {})
 
     # -- payments ----------------------------------------------------------
 

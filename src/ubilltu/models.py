@@ -342,3 +342,123 @@ class UsageMetrics:
             currency=r.get("currency"),
             raw=r,
         )
+
+
+@dataclass
+class FamilyMember:
+    """A member row in the caller's family view (``GET /me/family``)."""
+
+    member_id: str
+    member_email: Optional[str]
+    is_owner: bool
+    joined_date: Optional[str]
+    is_self: bool
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "FamilyMember":
+        return cls(
+            member_id=str(_first(r, "member_id", "id") or ""),
+            member_email=r.get("member_email"),
+            is_owner=bool(r.get("is_owner")),
+            joined_date=_first(r, "joined_date", "joinedDate"),
+            is_self=bool(r.get("is_self")),
+            raw=r,
+        )
+
+
+@dataclass
+class Family:
+    """The caller's family (owner or member view) from ``GET /me/family``."""
+
+    family_subscription_id: str
+    plan_name: Optional[str]
+    is_owner: bool
+    owner_name: Optional[str]
+    owner_email: Optional[str]
+    total_seats: int
+    active_members: int
+    extra_seats_purchased: int
+    members: List[FamilyMember] = field(default_factory=list)
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "Family":
+        return cls(
+            family_subscription_id=str(
+                _first(r, "family_subscription_id", "familySubscriptionId") or ""
+            ),
+            plan_name=_first(r, "plan_name", "planName"),
+            is_owner=bool(r.get("is_owner")),
+            owner_name=_first(r, "owner_name", "ownerName"),
+            owner_email=_first(r, "owner_email", "ownerEmail"),
+            total_seats=int(_first(r, "total_seats", "totalSeats") or 0),
+            active_members=int(_first(r, "active_members", "activeMembers") or 0),
+            extra_seats_purchased=int(
+                _first(r, "extra_seats_purchased", "extraSeatsPurchased") or 0
+            ),
+            members=[FamilyMember.from_json(m) for m in (r.get("members") or [])],
+            raw=r,
+        )
+
+    @property
+    def seats_available(self) -> int:
+        return max(0, self.total_seats - self.active_members)
+
+
+@dataclass
+class InviteCode:
+    """A family invite code (``POST/GET /me/family/invite(s)``)."""
+
+    code: str
+    family_subscription_id: Optional[str]
+    created_by: Optional[str]
+    created_at: Optional[str]
+    expires_at: Optional[str]
+    max_uses: Optional[int]
+    current_uses: int
+    status: str
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "InviteCode":
+        return cls(
+            code=str(r.get("code") or ""),
+            family_subscription_id=_first(
+                r, "family_subscription_id", "familySubscriptionId"
+            ),
+            created_by=_first(r, "created_by", "createdBy"),
+            created_at=_first(r, "created_at", "createdAt"),
+            expires_at=_first(r, "expires_at", "expiresAt"),
+            max_uses=_first(r, "max_uses", "maxUses"),
+            current_uses=int(_first(r, "current_uses", "currentUses") or 0),
+            status=str(r.get("status") or "ACTIVE"),
+            raw=r,
+        )
+
+
+@dataclass
+class InvitePreview:
+    """Public preview of an invite code (``GET /invite/{code}/validate``)."""
+
+    family_subscription_id: Optional[str]
+    plan_name: Optional[str]
+    owner_name: Optional[str]
+    owner_email: Optional[str]
+    seats_available: Optional[int]
+    expires_at: Optional[str]
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "InvitePreview":
+        return cls(
+            family_subscription_id=_first(
+                r, "family_subscription_id", "familySubscriptionId"
+            ),
+            plan_name=_first(r, "plan_name", "planName"),
+            owner_name=_first(r, "owner_name", "ownerName"),
+            owner_email=_first(r, "owner_email", "ownerEmail"),
+            seats_available=_first(r, "seats_available", "seatsAvailable"),
+            expires_at=_first(r, "expires_at", "expiresAt"),
+            raw=r,
+        )

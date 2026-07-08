@@ -6,8 +6,12 @@ from .client import UbilltuClient
 from .errors import UbilltuApiError, UbilltuAuthError, UbilltuError
 from .models import (
     AccountBalance,
+    Family,
+    FamilyMember,
     Invoice,
     InvoiceItem,
+    InviteCode,
+    InvitePreview,
     Page,
     Payment,
     PaymentMethod,
@@ -34,4 +38,8 @@ __all__ = [
     "PaymentMethod",
     "AccountBalance",
     "UsageMetrics",
+    "Family",
+    "FamilyMember",
+    "InviteCode",
+    "InvitePreview",
 ]

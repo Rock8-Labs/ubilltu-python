@@ -44,6 +44,7 @@ with UbilltuClient("your-store-slug") as client:
 | Subscriptions | `list_subscriptions`, `get_subscription`, `subscribe`, `change_plan`, `preview_change`, `cancel_subscription`, `pause_subscription`, `resume_subscription`, `reactivate_subscription` |
 | Invoices | `list_invoices`, `get_invoice`, `invoice_pdf` |
 | Payments | `list_payment_methods`, `setup_payment_method`, `signup`, `checkout` |
+| Family | `get_family`, `create_family_invite`, `list_family_invites`, `revoke_family_invite`, `accept_family_invite`, `remove_family_member`, `leave_family`, `validate_invite` (public) |
 
 List calls return a `Page` (`items`, `total`, `page`, `per_page`). Typed models
 (`Plan`, `Subscription`, `Invoice`, `InvoiceItem`, `Payment`, `PaymentMethod`,
