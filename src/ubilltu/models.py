@@ -6,10 +6,19 @@ nothing is lost even when the API adds fields the typed layer doesn't surface.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Generic, Optional, TypeVar
+from dataclasses import dataclass, field
+from typing import Callable, Generic, List, Optional, TypeVar
 
 T = TypeVar("T")
+
+
+def _first(d: dict, *keys):
+    """Return the first present, non-None value among ``keys`` (snake/camel)."""
+    for k in keys:
+        v = d.get(k)
+        if v is not None:
+            return v
+    return None
 
 
 @dataclass
@@ -59,7 +68,12 @@ class Plan:
     currency: Optional[str]
     billing_period: Optional[str]
     trial_days: Optional[int]
-    raw: dict
+    # Enrichment the API merges onto plans (not in the raw Kill Bill catalog):
+    features: List[str] = field(default_factory=list)
+    billing_mode: Optional[str] = None  # "full_price" | "pro_rata"
+    billing_day: Optional[int] = None   # set only for pro_rata plans
+    family_config: Optional[dict] = None  # {"enabled": bool, "includedSeats": int} | None
+    raw: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, r: dict) -> "Plan":
@@ -72,24 +86,33 @@ class Plan:
         # display name in `product_name`; fall back to flat fields for safety.
         prices = r.get("prices") or []
         first = prices[0] if prices else {}
-        price = r.get("price")
-        if price is None:
-            price = r.get("amount")
-        if price is None:
-            price = first.get("amount")
+        price = _first(r, "price", "amount") or first.get("amount")
         return cls(
-            id=str(r.get("plan_id") or r.get("id") or r.get("plan_name") or r.get("name") or ""),
-            name=str(r.get("product_name") or r.get("plan_name") or r.get("name") or ""),
+            id=str(_first(r, "plan_id", "id", "plan_name", "name") or ""),
+            name=str(_first(r, "product_name", "plan_name", "name") or ""),
             price=price,
             currency=r.get("currency") or first.get("currency"),
-            billing_period=r.get("billing_period")
-            or r.get("billingPeriod")
+            billing_period=_first(r, "billing_period", "billingPeriod")
             or first.get("billing_period"),
             trial_days=(trial.get("duration_length") or trial.get("durationLength"))
             if trial
-            else None,
+            else _first(r, "trial_days", "trialDays"),
+            features=list(r.get("features") or []),
+            billing_mode=_first(r, "billing_mode", "billingMode"),
+            billing_day=_first(r, "billing_day", "billingDay"),
+            family_config=_first(r, "family_config", "familyConfig"),
             raw=r,
         )
+
+    @property
+    def is_family(self) -> bool:
+        """True when this plan is family/group-enabled."""
+        fc = self.family_config or {}
+        return bool(isinstance(fc, dict) and fc.get("enabled"))
+
+    @property
+    def is_pro_rata(self) -> bool:
+        return (self.billing_mode or "").lower() == "pro_rata"
 
 
 @dataclass
@@ -102,7 +125,16 @@ class Subscription:
     state: Optional[str]
     price: Optional[float]
     currency: Optional[str]
-    raw: dict
+    # Lifecycle / display fields the API returns but the 0.2.0 model dropped:
+    cancelled_date: Optional[str] = None      # future date => scheduled end-of-term cancel
+    charged_through_date: Optional[str] = None
+    billing_end_date: Optional[str] = None
+    mrr_monthly: Optional[float] = None        # catalog price normalized to monthly
+    last_payment_amount: Optional[float] = None
+    last_payment_date: Optional[str] = None
+    last_payment_currency: Optional[str] = None
+    events: List[dict] = field(default_factory=list)  # detail endpoint's event stream
+    raw: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, r: dict) -> "Subscription":
@@ -116,6 +148,55 @@ class Subscription:
             state=sub.get("state") or sub.get("status"),
             price=sub.get("price"),
             currency=sub.get("currency"),
+            cancelled_date=_first(sub, "cancelled_date", "cancelledDate"),
+            charged_through_date=_first(sub, "charged_through_date", "chargedThroughDate"),
+            billing_end_date=_first(sub, "billing_end_date", "billingEndDate"),
+            mrr_monthly=_first(sub, "mrr_monthly", "mrrMonthly"),
+            last_payment_amount=_first(sub, "last_payment_amount", "lastPaymentAmount"),
+            last_payment_date=_first(sub, "last_payment_date", "lastPaymentDate"),
+            last_payment_currency=_first(sub, "last_payment_currency", "lastPaymentCurrency"),
+            events=list(r.get("events") or sub.get("events") or []),
+            raw=r,
+        )
+
+    @property
+    def is_cancellation_scheduled(self) -> bool:
+        """True when an end-of-term cancel is pending: ``cancelled_date`` is set
+        while the subscription is still ACTIVE (i.e. "Cancelling", keeps access
+        until the period end). Mirrors the storefront/portal UI logic."""
+        return self.cancelled_date is not None and (self.state or "").upper() == "ACTIVE"
+
+    @property
+    def is_paused(self) -> bool:
+        """True when the subscription is currently paused (Kill Bill BLOCKED).
+        A *scheduled* (future) pause is not this — it lives in ``events`` as a
+        future PAUSE_* event (no top-level field exists yet)."""
+        return (self.state or "").upper() == "BLOCKED"
+
+
+@dataclass
+class InvoiceItem:
+    """A single line on an invoice."""
+
+    description: Optional[str]
+    plan_name: Optional[str]
+    phase: Optional[str]
+    amount: Optional[float]
+    currency: Optional[str]
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "InvoiceItem":
+        return cls(
+            description=r.get("description"),
+            plan_name=_first(r, "plan_name", "planName"),
+            phase=r.get("phase"),
+            amount=r.get("amount"),
+            currency=r.get("currency"),
+            start_date=_first(r, "start_date", "startDate"),
+            end_date=_first(r, "end_date", "endDate"),
             raw=r,
         )
 
@@ -128,7 +209,13 @@ class Invoice:
     amount: Optional[float]
     currency: Optional[str]
     status: Optional[str]
-    raw: dict
+    invoice_number: Optional[str] = None
+    invoice_date: Optional[str] = None
+    balance: Optional[float] = None
+    credit_adj: Optional[float] = None
+    refund_adj: Optional[float] = None
+    items: List[InvoiceItem] = field(default_factory=list)
+    raw: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, r: dict) -> "Invoice":
@@ -138,8 +225,20 @@ class Invoice:
             amount=amount if amount is not None else r.get("balance"),
             currency=r.get("currency"),
             status=r.get("status"),
+            invoice_number=_first(r, "invoice_number", "invoiceNumber"),
+            invoice_date=_first(r, "invoice_date", "invoiceDate"),
+            balance=r.get("balance"),
+            credit_adj=_first(r, "credit_adj", "creditAdj"),
+            refund_adj=_first(r, "refund_adj", "refundAdj"),
+            items=[InvoiceItem.from_json(i) for i in (r.get("items") or [])],
             raw=r,
         )
+
+    @property
+    def is_empty(self) -> bool:
+        """True for the zero-total, zero-item invoices Kill Bill commits on
+        subscription setup (findings #1) — useful to filter from a customer list."""
+        return (self.amount or 0) == 0 and not self.items
 
 
 @dataclass
@@ -150,7 +249,13 @@ class Payment:
     amount: Optional[float]
     currency: Optional[str]
     status: Optional[str]
-    raw: dict
+    payment_number: Optional[str] = None
+    payment_date: Optional[str] = None
+    invoice_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    refunded_amount: Optional[float] = None
+    description: Optional[str] = None
+    raw: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, r: dict) -> "Payment":
@@ -160,6 +265,12 @@ class Payment:
             amount=amount if amount is not None else r.get("purchased_amount"),
             currency=r.get("currency"),
             status=r.get("status") or r.get("state"),
+            payment_number=_first(r, "payment_number", "paymentNumber"),
+            payment_date=_first(r, "payment_date", "paymentDate"),
+            invoice_id=_first(r, "invoice_id", "invoiceId"),
+            invoice_number=_first(r, "invoice_number", "invoiceNumber"),
+            refunded_amount=_first(r, "refunded_amount", "refundedAmount"),
+            description=r.get("description"),
             raw=r,
         )
 
@@ -174,16 +285,60 @@ class PaymentMethod:
     card_last4: Optional[str]
     expiry_month: Optional[int]
     expiry_year: Optional[int]
-    raw: dict
+    raw: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, r: dict) -> "PaymentMethod":
         return cls(
             id=str(r.get("payment_method_id") or r.get("id") or ""),
             is_default=bool(r.get("is_default")),
-            card_brand=r.get("card_brand"),
-            card_last4=r.get("card_last_four") or r.get("last4"),
+            card_brand=_first(r, "card_brand", "card_type"),
+            card_last4=_first(r, "card_last_four", "last4"),
             expiry_month=r.get("expiry_month"),
             expiry_year=r.get("expiry_year"),
+            raw=r,
+        )
+
+
+@dataclass
+class AccountBalance:
+    """Outstanding balance + available credit for the account."""
+
+    balance: Optional[float]   # what's owed (Kill Bill accountBalance)
+    credit: Optional[float]    # available credit / CBA (offsets future invoices)
+    currency: Optional[str]
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "AccountBalance":
+        return cls(
+            balance=r.get("balance"),
+            credit=r.get("credit"),
+            currency=r.get("currency"),
+            raw=r,
+        )
+
+
+@dataclass
+class UsageMetrics:
+    """Account usage/rollup metrics (``GET /account/usage``)."""
+
+    total_subscriptions: Optional[int]
+    active_subscriptions: Optional[int]
+    total_invoices: Optional[int]
+    unpaid_invoices: Optional[int]
+    total_spent: Optional[float]
+    currency: Optional[str]
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "UsageMetrics":
+        return cls(
+            total_subscriptions=_first(r, "total_subscriptions", "totalSubscriptions"),
+            active_subscriptions=_first(r, "active_subscriptions", "activeSubscriptions"),
+            total_invoices=_first(r, "total_invoices", "totalInvoices"),
+            unpaid_invoices=_first(r, "unpaid_invoices", "unpaidInvoices"),
+            total_spent=_first(r, "total_spent", "totalSpent"),
+            currency=r.get("currency"),
             raw=r,
         )

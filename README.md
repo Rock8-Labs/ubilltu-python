@@ -46,7 +46,23 @@ with UbilltuClient("your-store-slug") as client:
 | Payments | `list_payment_methods`, `setup_payment_method`, `signup`, `checkout` |
 
 List calls return a `Page` (`items`, `total`, `page`, `per_page`). Typed models
-(`Plan`, `Subscription`, `Invoice`, `Payment`) expose common fields plus `.raw`.
+(`Plan`, `Subscription`, `Invoice`, `InvoiceItem`, `Payment`, `PaymentMethod`,
+`AccountBalance`, `UsageMetrics`) expose common fields plus `.raw`, so nothing is
+lost when the API adds fields.
+
+Notable fields/helpers:
+
+- `Plan.features`, `.billing_mode`, `.billing_day`, `.family_config`, plus
+  `.is_family` / `.is_pro_rata`.
+- `Subscription.cancelled_date`, `.charged_through_date`, `.billing_end_date`,
+  `.mrr_monthly`, `.last_payment_*`, `.events`, plus `.is_cancellation_scheduled`
+  (a pending end-of-term cancel — still ACTIVE, keeps access until the date) and
+  `.is_paused`.
+- `Invoice.items` (`InvoiceItem[]`), `.balance`, `.credit_adj`/`.refund_adj`, and
+  `.is_empty` (the zero-total/zero-item invoices Kill Bill commits on setup).
+- `balance()` → `AccountBalance` (`.balance`, `.credit` — available account credit
+  from a downgrade); `usage()` → `UsageMetrics`.
+
 Errors raise `UbilltuApiError` (non-2xx, with `.status_code`) or `UbilltuAuthError`.
 
 ## Error handling

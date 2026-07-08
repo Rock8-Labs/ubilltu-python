@@ -8,6 +8,7 @@ import httpx
 
 from .errors import UbilltuApiError, UbilltuAuthError
 from .models import (
+    AccountBalance,
     Invoice,
     Page,
     Payment,
@@ -15,6 +16,7 @@ from .models import (
     Plan,
     Subscription,
     Tokens,
+    UsageMetrics,
 )
 
 _DEFAULT_BASE_URL = "https://api.ubilltu.com"
@@ -141,13 +143,13 @@ class UbilltuClient:
         """Update the subscriber's profile fields (e.g. ``name``, ``phone``)."""
         return self._put("/api/v1/account", fields)
 
-    def balance(self) -> dict:
-        """The subscriber's account balance."""
-        return self._get("/api/v1/account/balance")
+    def balance(self) -> AccountBalance:
+        """The subscriber's outstanding balance + available credit."""
+        return AccountBalance.from_json(self._get("/api/v1/account/balance"))
 
-    def usage(self) -> dict:
+    def usage(self) -> UsageMetrics:
         """The subscriber's usage metrics."""
-        return self._get("/api/v1/account/usage")
+        return UsageMetrics.from_json(self._get("/api/v1/account/usage"))
 
     def list_payments(self) -> Page:
         """The subscriber's payment history."""
