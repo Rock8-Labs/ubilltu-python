@@ -158,6 +158,20 @@ class UbilltuClient:
         """The subscriber's payment history."""
         return Page.from_json(self._get("/api/v1/account/payments"), Payment.from_json)
 
+    def erase_account(
+        self, confirm_email: str, confirm_phrase: str = "ERASE"
+    ) -> dict:
+        """Right-to-erasure (GDPR Art. 17 / POPIA s24). Cancels subscriptions,
+        scrubs PII, and pseudonymizes the account — IRREVERSIBLE.
+
+        ``confirm_email`` must match the account email and ``confirm_phrase`` must
+        be exactly ``"ERASE"``. Returns ``{"erasure_id", "erased_fields": [...]}``.
+        """
+        return self._post(
+            "/api/v1/account/erase",
+            {"confirm_email": confirm_email, "confirm_phrase": confirm_phrase},
+        )
+
     # -- plans -------------------------------------------------------------
 
     def list_plans(self) -> Page:
@@ -236,6 +250,15 @@ class UbilltuClient:
             self._post(f"/api/v1/subscriptions/{subscription_id}/reactivate", {})
         )
 
+    def self_resume_allowed(self, subscription_id: str) -> bool:
+        """Whether the customer may resume this (paused) subscription themselves
+        (the tenant admin can disable self-resume; SEC-019)."""
+        return bool(
+            self._get(
+                f"/api/v1/subscriptions/{subscription_id}/self-resume-allowed"
+            ).get("allowed")
+        )
+
     # -- invoices ----------------------------------------------------------
 
     def list_invoices(self) -> Page:
@@ -254,6 +277,15 @@ class UbilltuClient:
         if resp.status_code // 100 != 2:
             self._raise(resp)
         return resp.content
+
+    def invoice_html(self, invoice_id: str) -> str:
+        """Render an invoice as branded HTML (string)."""
+        resp = self._http.get(
+            f"/api/v1/invoices/{invoice_id}/html", headers=self._headers()
+        )
+        if resp.status_code // 100 != 2:
+            self._raise(resp)
+        return resp.text
 
     # -- family ------------------------------------------------------------
 
@@ -301,6 +333,50 @@ class UbilltuClient:
         """List the subscriber's saved payment methods (cards on file)."""
         return Page.from_json(
             self._get("/api/v1/payments/methods"), PaymentMethod.from_json
+        )
+
+    def add_payment_method(
+        self, card_token: str, is_default: bool = False
+    ) -> PaymentMethod:
+        """Save a payment method from a PSP card token."""
+        return PaymentMethod.from_json(
+            self._post(
+                "/api/v1/payments/methods",
+                {"card_token": card_token, "is_default": is_default},
+            )
+        )
+
+    def delete_payment_method(self, method_id: str) -> dict:
+        """Remove a saved payment method (re-promotes another card if it was default)."""
+        return self._delete(f"/api/v1/payments/methods/{method_id}")
+
+    def set_default_payment_method(self, method_id: str) -> dict:
+        """Make a saved payment method the account default."""
+        return self._put(f"/api/v1/payments/methods/{method_id}/default", {})
+
+    def reconcile_default_payment_method(self) -> dict:
+        """Ensure the account default points at a real, chargeable card
+        (promotes the first real card if the default is an incomplete shell)."""
+        return self._post("/api/v1/payments/methods/reconcile-default", {})
+
+    def get_payment(self, payment_id: str) -> Payment:
+        """Fetch a single payment's live status (reconciles PENDING with the gateway)."""
+        return Payment.from_json(self._get(f"/api/v1/payments/{payment_id}"))
+
+    def create_one_off_payment(self, source: dict, settlement: dict) -> dict:
+        """Make an ad-hoc / one-off payment.
+
+        ``source`` describes what to pay, e.g.
+        ``{"type": "ad_hoc", "amount": 50, "currency": "ZAR", "description": "..."}``
+        (or ``{"type": "invoice", "invoice_id": ...}`` / ``{"type": "addon", "plan_id": ...}``).
+        ``settlement`` describes how, e.g. ``{"mode": "saved", "payment_method_id": ...}``
+        or ``{"mode": "hosted", "return_url": ...}``.
+
+        Returns the raw response (``status``, ``requires_redirect``, ``redirect_url``,
+        ``payment_id``); on a hosted settlement send the customer to ``redirect_url``.
+        """
+        return self._post(
+            "/api/v1/payments/one-off", {"source": source, "settlement": settlement}
         )
 
     def setup_payment_method(
