@@ -8,16 +8,32 @@ import httpx
 
 from .errors import UbilltuApiError, UbilltuAuthError
 from .models import (
+    AccountBalance,
+    Family,
     Invoice,
+    InviteCode,
+    InvitePreview,
     Page,
+    PauseResult,
     Payment,
     PaymentMethod,
     Plan,
     Subscription,
     Tokens,
+    UsageMetrics,
 )
 
 _DEFAULT_BASE_URL = "https://api.ubilltu.com"
+
+
+def _page_params(page: Optional[int], per_page: Optional[int]) -> Optional[dict]:
+    """Build a ``{page, per_page}`` query dict (omitting unset values)."""
+    p: dict = {}
+    if page is not None:
+        p["page"] = page
+    if per_page is not None:
+        p["per_page"] = per_page
+    return p or None
 
 
 class UbilltuClient:
@@ -84,7 +100,7 @@ class UbilltuClient:
     def login(self, email: str, password: str) -> Tokens:
         """Authenticate a subscriber and store the session."""
         data = self._post(
-            "/api/v1/auth/login", {"email": email, "password": password}, auth=False
+            "/api/v1/auth/login", {"email": email, "password": password}, auth="none"
         )
         self._tokens = Tokens.from_json(data)
         return self._tokens
@@ -109,7 +125,7 @@ class UbilltuClient:
         }
         if name is not None:
             body["name"] = name
-        tokens = Tokens.from_json(self._post("/api/v1/auth/register", body, auth=False))
+        tokens = Tokens.from_json(self._post("/api/v1/auth/register", body, auth="none"))
         if tokens.access_token:
             self._tokens = tokens
         return tokens
@@ -119,7 +135,7 @@ class UbilltuClient:
         rt = self._tokens.refresh_token if self._tokens else None
         if not rt:
             raise UbilltuAuthError("No refresh token available.")
-        data = self._post("/api/v1/auth/refresh", {"refresh_token": rt}, auth=False)
+        data = self._post("/api/v1/auth/refresh", {"refresh_token": rt}, auth="none")
         self._tokens = Tokens.from_json(data)
         return self._tokens
 
@@ -141,34 +157,64 @@ class UbilltuClient:
         """Update the subscriber's profile fields (e.g. ``name``, ``phone``)."""
         return self._put("/api/v1/account", fields)
 
-    def balance(self) -> dict:
-        """The subscriber's account balance."""
-        return self._get("/api/v1/account/balance")
+    def balance(self) -> AccountBalance:
+        """The subscriber's outstanding balance + available credit."""
+        return AccountBalance.from_json(self._get("/api/v1/account/balance"))
 
-    def usage(self) -> dict:
+    def usage(self) -> UsageMetrics:
         """The subscriber's usage metrics."""
-        return self._get("/api/v1/account/usage")
+        return UsageMetrics.from_json(self._get("/api/v1/account/usage"))
 
-    def list_payments(self) -> Page:
+    def list_payments(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """The subscriber's payment history."""
-        return Page.from_json(self._get("/api/v1/account/payments"), Payment.from_json)
+        return Page.from_json(
+            self._get("/api/v1/account/payments", params=_page_params(page, per_page)),
+            Payment.from_json,
+        )
+
+    def erase_account(
+        self, confirm_email: str, confirm_phrase: str = "ERASE"
+    ) -> dict:
+        """Right-to-erasure (GDPR Art. 17 / POPIA s24). Cancels subscriptions,
+        scrubs PII, and pseudonymizes the account — IRREVERSIBLE.
+
+        ``confirm_email`` must match the account email and ``confirm_phrase`` must
+        be exactly ``"ERASE"``. Returns ``{"erasure_id", "erased_fields": [...]}``.
+        """
+        return self._post(
+            "/api/v1/account/erase",
+            {"confirm_email": confirm_email, "confirm_phrase": confirm_phrase},
+        )
 
     # -- plans -------------------------------------------------------------
 
-    def list_plans(self) -> Page:
-        """List available plans from the tenant catalog."""
-        return Page.from_json(self._get("/api/v1/plans"), Plan.from_json)
+    def list_plans(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
+        """List available plans. PUBLIC — works before ``login()`` (the
+        storefront slug is enough; the token is attached only if present)."""
+        return Page.from_json(
+            self._get(
+                "/api/v1/plans", params=_page_params(page, per_page), auth="optional"
+            ),
+            Plan.from_json,
+        )
 
     def get_plan(self, plan_id: str) -> Plan:
-        """Fetch a single plan by id."""
-        return Plan.from_json(self._get(f"/api/v1/plans/{plan_id}"))
+        """Fetch a single plan by id. PUBLIC — works before ``login()``."""
+        return Plan.from_json(self._get(f"/api/v1/plans/{plan_id}", auth="optional"))
 
     # -- subscriptions -----------------------------------------------------
 
-    def list_subscriptions(self) -> Page:
+    def list_subscriptions(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List the subscriber's subscriptions."""
         return Page.from_json(
-            self._get("/api/v1/subscriptions"), Subscription.from_json
+            self._get("/api/v1/subscriptions", params=_page_params(page, per_page)),
+            Subscription.from_json,
         )
 
     def get_subscription(self, subscription_id: str) -> Subscription:
@@ -209,19 +255,29 @@ class UbilltuClient:
         params = {"new_plan": new_plan} if new_plan else None
         return self._get(f"/api/v1/subscriptions/{subscription_id}/dry-run", params=params)
 
-    def cancel_subscription(self, subscription_id: str) -> dict:
-        """Cancel a subscription."""
-        return self._delete(f"/api/v1/subscriptions/{subscription_id}")
+    def cancel_subscription(
+        self, subscription_id: str, policy: Optional[str] = "END_OF_TERM"
+    ) -> dict:
+        """Cancel a subscription.
 
-    def pause_subscription(self, subscription_id: str) -> Subscription:
-        """Pause a subscription."""
-        return Subscription.from_json(
+        ``policy`` defaults to ``END_OF_TERM`` — the subscription keeps access
+        until the period ends and reads as "Cancelling" (reactivatable). Pass
+        ``"IMMEDIATE"`` to cancel now, or ``None`` to use the server default.
+        """
+        body = {"use_policy": policy} if policy else None
+        return self._request(
+            "DELETE", f"/api/v1/subscriptions/{subscription_id}", body=body
+        )
+
+    def pause_subscription(self, subscription_id: str) -> PauseResult:
+        """Pause a subscription (schedules pause at end of period)."""
+        return PauseResult.from_json(
             self._post(f"/api/v1/subscriptions/{subscription_id}/pause", {})
         )
 
-    def resume_subscription(self, subscription_id: str) -> Subscription:
+    def resume_subscription(self, subscription_id: str) -> PauseResult:
         """Resume a paused subscription."""
-        return Subscription.from_json(
+        return PauseResult.from_json(
             self._post(f"/api/v1/subscriptions/{subscription_id}/resume", {})
         )
 
@@ -231,11 +287,25 @@ class UbilltuClient:
             self._post(f"/api/v1/subscriptions/{subscription_id}/reactivate", {})
         )
 
+    def self_resume_allowed(self, subscription_id: str) -> bool:
+        """Whether the customer may resume this (paused) subscription themselves
+        (the tenant admin can disable self-resume; SEC-019)."""
+        return bool(
+            self._get(
+                f"/api/v1/subscriptions/{subscription_id}/self-resume-allowed"
+            ).get("allowed")
+        )
+
     # -- invoices ----------------------------------------------------------
 
-    def list_invoices(self) -> Page:
+    def list_invoices(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List the subscriber's invoices."""
-        return Page.from_json(self._get("/api/v1/invoices"), Invoice.from_json)
+        return Page.from_json(
+            self._get("/api/v1/invoices", params=_page_params(page, per_page)),
+            Invoice.from_json,
+        )
 
     def get_invoice(self, invoice_id: str) -> dict:
         """Fetch a single invoice with line-item detail."""
@@ -250,12 +320,108 @@ class UbilltuClient:
             self._raise(resp)
         return resp.content
 
+    def invoice_html(self, invoice_id: str) -> str:
+        """Render an invoice as branded HTML (string)."""
+        resp = self._http.get(
+            f"/api/v1/invoices/{invoice_id}/html", headers=self._headers()
+        )
+        if resp.status_code // 100 != 2:
+            self._raise(resp)
+        return resp.text
+
+    # -- family ------------------------------------------------------------
+
+    def get_family(self) -> Optional[Family]:
+        """The caller's family view (owner or member), or ``None`` if not in one."""
+        fam = self._get("/api/v1/me/family").get("family")
+        return Family.from_json(fam) if isinstance(fam, dict) else None
+
+    def remove_family_member(self, member_id: str) -> dict:
+        """Owner removes a member from their family."""
+        return self._post(f"/api/v1/me/family/members/{member_id}/remove", {})
+
+    def leave_family(self) -> dict:
+        """Leave the family the caller currently belongs to (members only)."""
+        return self._post("/api/v1/me/family-memberships/leave", {})
+
+    def create_family_invite(self, expires_in_hours: int = 72) -> InviteCode:
+        """Owner generates a fresh invite code (invalidates any existing one)."""
+        r = self._post(
+            "/api/v1/me/family/invite", {"expires_in_hours": expires_in_hours}
+        )
+        return InviteCode.from_json(r.get("data") or {})
+
+    def list_family_invites(self) -> list:
+        """List invite codes for the caller's owned family."""
+        r = self._get("/api/v1/me/family/invites")
+        return [InviteCode.from_json(c) for c in (r.get("data") or [])]
+
+    def revoke_family_invite(self, code: str) -> dict:
+        """Owner revokes an invite code."""
+        return self._post(f"/api/v1/me/family/invite/{code}/revoke", {})
+
+    def accept_family_invite(self, code: str) -> dict:
+        """Redeem an invite code to join a family (identity comes from the session)."""
+        return self._post(f"/api/v1/me/family/invite/{code}/accept", {})
+
+    def validate_invite(self, code: str) -> InvitePreview:
+        """Public preview of an invite code (no auth) — for a join page pre-login."""
+        r = self._request("GET", f"/api/v1/invite/{code}/validate", auth="none")
+        return InvitePreview.from_json(r.get("preview") or {})
+
     # -- payments ----------------------------------------------------------
 
-    def list_payment_methods(self) -> Page:
+    def list_payment_methods(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List the subscriber's saved payment methods (cards on file)."""
         return Page.from_json(
-            self._get("/api/v1/payments/methods"), PaymentMethod.from_json
+            self._get("/api/v1/payments/methods", params=_page_params(page, per_page)),
+            PaymentMethod.from_json,
+        )
+
+    def add_payment_method(
+        self, card_token: str, is_default: bool = False
+    ) -> PaymentMethod:
+        """Save a payment method from a PSP card token."""
+        return PaymentMethod.from_json(
+            self._post(
+                "/api/v1/payments/methods",
+                {"card_token": card_token, "is_default": is_default},
+            )
+        )
+
+    def delete_payment_method(self, method_id: str) -> dict:
+        """Remove a saved payment method (re-promotes another card if it was default)."""
+        return self._delete(f"/api/v1/payments/methods/{method_id}")
+
+    def set_default_payment_method(self, method_id: str) -> dict:
+        """Make a saved payment method the account default."""
+        return self._put(f"/api/v1/payments/methods/{method_id}/default", {})
+
+    def reconcile_default_payment_method(self) -> dict:
+        """Ensure the account default points at a real, chargeable card
+        (promotes the first real card if the default is an incomplete shell)."""
+        return self._post("/api/v1/payments/methods/reconcile-default", {})
+
+    def get_payment(self, payment_id: str) -> Payment:
+        """Fetch a single payment's live status (reconciles PENDING with the gateway)."""
+        return Payment.from_json(self._get(f"/api/v1/payments/{payment_id}"))
+
+    def create_one_off_payment(self, source: dict, settlement: dict) -> dict:
+        """Make an ad-hoc / one-off payment.
+
+        ``source`` describes what to pay, e.g.
+        ``{"type": "ad_hoc", "amount": 50, "currency": "ZAR", "description": "..."}``
+        (or ``{"type": "invoice", "invoice_id": ...}`` / ``{"type": "addon", "plan_id": ...}``).
+        ``settlement`` describes how, e.g. ``{"mode": "saved", "payment_method_id": ...}``
+        or ``{"mode": "hosted", "return_url": ...}``.
+
+        Returns the raw response (``status``, ``requires_redirect``, ``redirect_url``,
+        ``payment_id``); on a hosted settlement send the customer to ``redirect_url``.
+        """
+        return self._post(
+            "/api/v1/payments/one-off", {"source": source, "settlement": settlement}
         )
 
     def setup_payment_method(
@@ -303,24 +469,26 @@ class UbilltuClient:
 
     # -- internals ---------------------------------------------------------
 
-    def _headers(self, json: bool = False, auth: bool = True) -> dict:
+    def _headers(self, json: bool = False, auth: str = "required") -> dict:
+        """auth: "required" (attach token, raise if missing), "optional" (attach
+        if present), or "none" (never attach)."""
         h = {
             "X-Storefront-Slug": self.storefront_slug,
             "Accept": "application/json",
         }
         if json:
             h["Content-Type"] = "application/json"
-        if auth:
-            if not self.is_authenticated:
-                raise UbilltuAuthError()
-            assert self._tokens is not None
-            h["Authorization"] = f"Bearer {self._tokens.access_token}"
+        token = self._tokens.access_token if self.is_authenticated else None
+        if auth == "required" and not token:
+            raise UbilltuAuthError()
+        if auth != "none" and token:
+            h["Authorization"] = f"Bearer {token}"
         return h
 
-    def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        return self._request("GET", path, params=params)
+    def _get(self, path: str, params: Optional[dict] = None, auth: str = "required") -> dict:
+        return self._request("GET", path, params=params, auth=auth)
 
-    def _post(self, path: str, body: dict, auth: bool = True) -> dict:
+    def _post(self, path: str, body: dict, auth: str = "required") -> dict:
         return self._request("POST", path, body=body, auth=auth)
 
     def _put(self, path: str, body: dict) -> dict:
@@ -334,8 +502,9 @@ class UbilltuClient:
         method: str,
         path: str,
         body: Optional[dict] = None,
-        auth: bool = True,
+        auth: str = "required",
         params: Optional[dict] = None,
+        _retry: bool = True,
     ) -> dict:
         resp = self._http.request(
             method,
@@ -344,6 +513,23 @@ class UbilltuClient:
             json=body if body is not None else None,
             params=params,
         )
+        # Transparent refresh-once on 401 (docs recommend refresh-on-401).
+        if (
+            resp.status_code == 401
+            and _retry
+            and auth != "none"
+            and self._tokens is not None
+            and self._tokens.refresh_token
+        ):
+            try:
+                self.refresh()
+                refreshed = True
+            except Exception:
+                refreshed = False
+            if refreshed:
+                return self._request(
+                    method, path, body=body, auth=auth, params=params, _retry=False
+                )
         if resp.status_code // 100 != 2:
             self._raise(resp)
         if not resp.content:

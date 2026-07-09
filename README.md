@@ -39,14 +39,35 @@ with UbilltuClient("your-store-slug") as client:
 | Area | Methods |
 |---|---|
 | Auth | `login`, `register`, `refresh`, `logout`, `me`, `restore_session` |
-| Account | `account`, `update_account`, `balance`, `usage`, `list_payments` |
+| Account | `account`, `update_account`, `balance`, `usage`, `list_payments`, `erase_account` |
 | Plans | `list_plans`, `get_plan` |
-| Subscriptions | `list_subscriptions`, `get_subscription`, `subscribe`, `change_plan`, `preview_change`, `cancel_subscription`, `pause_subscription`, `resume_subscription`, `reactivate_subscription` |
-| Invoices | `list_invoices`, `get_invoice`, `invoice_pdf` |
-| Payments | `list_payment_methods`, `setup_payment_method`, `signup`, `checkout` |
+| Subscriptions | `list_subscriptions`, `get_subscription`, `subscribe`, `change_plan`, `preview_change`, `cancel_subscription`, `pause_subscription`, `resume_subscription`, `reactivate_subscription`, `self_resume_allowed` |
+| Invoices | `list_invoices`, `get_invoice`, `invoice_pdf`, `invoice_html` |
+| Payments | `list_payment_methods`, `add_payment_method`, `delete_payment_method`, `set_default_payment_method`, `reconcile_default_payment_method`, `setup_payment_method`, `get_payment`, `create_one_off_payment`, `signup`, `checkout` |
+| Family | `get_family`, `create_family_invite`, `list_family_invites`, `revoke_family_invite`, `accept_family_invite`, `remove_family_member`, `leave_family`, `validate_invite` (public) |
 
 List calls return a `Page` (`items`, `total`, `page`, `per_page`). Typed models
-(`Plan`, `Subscription`, `Invoice`, `Payment`) expose common fields plus `.raw`.
+(`Plan`, `Subscription`, `Invoice`, `InvoiceItem`, `Payment`, `PaymentMethod`,
+`AccountBalance`, `UsageMetrics`) expose common fields plus `.raw`, so nothing is
+lost when the API adds fields.
+
+Notable fields/helpers:
+
+- `Plan.features`, `.billing_mode`, `.billing_day`, `.family_config`, plus
+  `.is_family` / `.is_pro_rata`.
+- `Subscription.cancelled_date`, `.charged_through_date`, `.billing_end_date`,
+  `.mrr_monthly`, `.last_payment_*`, `.events`, plus `.is_cancellation_scheduled`
+  (a pending end-of-term cancel — still ACTIVE, keeps access until the date) and
+  `.is_paused`.
+- `Invoice.items` (`InvoiceItem[]`), `.balance`, `.credit_adj`/`.refund_adj`, and
+  `.is_empty` (the zero-total/zero-item invoices Kill Bill commits on setup).
+- `balance()` → `AccountBalance` (`.balance`, `.credit` — available account credit
+  from a downgrade); `usage()` → `UsageMetrics`.
+
+List methods take optional `page` / `per_page` (default: first page). When a
+subscription's `price` comes back null, `resolve_subscription_price(sub, plans)`
+derives it from the matching plan.
+
 Errors raise `UbilltuApiError` (non-2xx, with `.status_code`) or `UbilltuAuthError`.
 
 ## Error handling

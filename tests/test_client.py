@@ -31,7 +31,7 @@ def test_login_stores_token_and_attaches_headers():
 def test_authed_call_before_login_raises():
     client = make_client(lambda request: httpx.Response(200, json={}))
     with pytest.raises(UbilltuAuthError):
-        client.list_plans()
+        client.list_subscriptions()  # genuinely authed (list_plans is public)
 
 
 def test_non_2xx_maps_to_api_error():
