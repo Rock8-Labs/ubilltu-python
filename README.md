@@ -64,6 +64,10 @@ Notable fields/helpers:
 - `balance()` → `AccountBalance` (`.balance`, `.credit` — available account credit
   from a downgrade); `usage()` → `UsageMetrics`.
 
+List methods take optional `page` / `per_page` (default: first page). When a
+subscription's `price` comes back null, `resolve_subscription_price(sub, plans)`
+derives it from the matching plan.
+
 Errors raise `UbilltuApiError` (non-2xx, with `.status_code`) or `UbilltuAuthError`.
 
 ## Error handling

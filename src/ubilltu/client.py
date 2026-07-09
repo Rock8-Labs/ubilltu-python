@@ -25,6 +25,16 @@ from .models import (
 _DEFAULT_BASE_URL = "https://api.ubilltu.com"
 
 
+def _page_params(page: Optional[int], per_page: Optional[int]) -> Optional[dict]:
+    """Build a ``{page, per_page}`` query dict (omitting unset values)."""
+    p: dict = {}
+    if page is not None:
+        p["page"] = page
+    if per_page is not None:
+        p["per_page"] = per_page
+    return p or None
+
+
 class UbilltuClient:
     """A client for the ubilltu subscription commerce API.
 
@@ -154,9 +164,14 @@ class UbilltuClient:
         """The subscriber's usage metrics."""
         return UsageMetrics.from_json(self._get("/api/v1/account/usage"))
 
-    def list_payments(self) -> Page:
+    def list_payments(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """The subscriber's payment history."""
-        return Page.from_json(self._get("/api/v1/account/payments"), Payment.from_json)
+        return Page.from_json(
+            self._get("/api/v1/account/payments", params=_page_params(page, per_page)),
+            Payment.from_json,
+        )
 
     def erase_account(
         self, confirm_email: str, confirm_phrase: str = "ERASE"
@@ -174,9 +189,14 @@ class UbilltuClient:
 
     # -- plans -------------------------------------------------------------
 
-    def list_plans(self) -> Page:
+    def list_plans(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List available plans from the tenant catalog."""
-        return Page.from_json(self._get("/api/v1/plans"), Plan.from_json)
+        return Page.from_json(
+            self._get("/api/v1/plans", params=_page_params(page, per_page)),
+            Plan.from_json,
+        )
 
     def get_plan(self, plan_id: str) -> Plan:
         """Fetch a single plan by id."""
@@ -184,10 +204,13 @@ class UbilltuClient:
 
     # -- subscriptions -----------------------------------------------------
 
-    def list_subscriptions(self) -> Page:
+    def list_subscriptions(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List the subscriber's subscriptions."""
         return Page.from_json(
-            self._get("/api/v1/subscriptions"), Subscription.from_json
+            self._get("/api/v1/subscriptions", params=_page_params(page, per_page)),
+            Subscription.from_json,
         )
 
     def get_subscription(self, subscription_id: str) -> Subscription:
@@ -261,9 +284,14 @@ class UbilltuClient:
 
     # -- invoices ----------------------------------------------------------
 
-    def list_invoices(self) -> Page:
+    def list_invoices(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List the subscriber's invoices."""
-        return Page.from_json(self._get("/api/v1/invoices"), Invoice.from_json)
+        return Page.from_json(
+            self._get("/api/v1/invoices", params=_page_params(page, per_page)),
+            Invoice.from_json,
+        )
 
     def get_invoice(self, invoice_id: str) -> dict:
         """Fetch a single invoice with line-item detail."""
@@ -329,10 +357,13 @@ class UbilltuClient:
 
     # -- payments ----------------------------------------------------------
 
-    def list_payment_methods(self) -> Page:
+    def list_payment_methods(
+        self, *, page: Optional[int] = None, per_page: Optional[int] = None
+    ) -> Page:
         """List the subscriber's saved payment methods (cards on file)."""
         return Page.from_json(
-            self._get("/api/v1/payments/methods"), PaymentMethod.from_json
+            self._get("/api/v1/payments/methods", params=_page_params(page, per_page)),
+            PaymentMethod.from_json,
         )
 
     def add_payment_method(

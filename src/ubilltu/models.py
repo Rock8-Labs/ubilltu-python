@@ -437,6 +437,25 @@ class InviteCode:
         )
 
 
+def resolve_subscription_price(
+    subscription: "Subscription", plans: List["Plan"]
+) -> Optional[float]:
+    """Best-effort subscription price.
+
+    A subscription record's ``price`` can come back null from the API (findings
+    #5); when it does, derive it from the matching plan in ``plans`` (matched on
+    the plan slug/name). Returns ``None`` if it can't be resolved.
+    """
+    if subscription.price is not None:
+        return subscription.price
+    name = subscription.plan_name
+    if name:
+        for p in plans:
+            if p.id == name or p.name == name:
+                return p.price
+    return None
+
+
 @dataclass
 class InvitePreview:
     """Public preview of an invite code (``GET /invite/{code}/validate``)."""
