@@ -14,6 +14,7 @@ from .models import (
     InviteCode,
     InvitePreview,
     Page,
+    PauseResult,
     Payment,
     PaymentMethod,
     Plan,
@@ -99,7 +100,7 @@ class UbilltuClient:
     def login(self, email: str, password: str) -> Tokens:
         """Authenticate a subscriber and store the session."""
         data = self._post(
-            "/api/v1/auth/login", {"email": email, "password": password}, auth=False
+            "/api/v1/auth/login", {"email": email, "password": password}, auth="none"
         )
         self._tokens = Tokens.from_json(data)
         return self._tokens
@@ -124,7 +125,7 @@ class UbilltuClient:
         }
         if name is not None:
             body["name"] = name
-        tokens = Tokens.from_json(self._post("/api/v1/auth/register", body, auth=False))
+        tokens = Tokens.from_json(self._post("/api/v1/auth/register", body, auth="none"))
         if tokens.access_token:
             self._tokens = tokens
         return tokens
@@ -134,7 +135,7 @@ class UbilltuClient:
         rt = self._tokens.refresh_token if self._tokens else None
         if not rt:
             raise UbilltuAuthError("No refresh token available.")
-        data = self._post("/api/v1/auth/refresh", {"refresh_token": rt}, auth=False)
+        data = self._post("/api/v1/auth/refresh", {"refresh_token": rt}, auth="none")
         self._tokens = Tokens.from_json(data)
         return self._tokens
 
@@ -192,15 +193,18 @@ class UbilltuClient:
     def list_plans(
         self, *, page: Optional[int] = None, per_page: Optional[int] = None
     ) -> Page:
-        """List available plans from the tenant catalog."""
+        """List available plans. PUBLIC — works before ``login()`` (the
+        storefront slug is enough; the token is attached only if present)."""
         return Page.from_json(
-            self._get("/api/v1/plans", params=_page_params(page, per_page)),
+            self._get(
+                "/api/v1/plans", params=_page_params(page, per_page), auth="optional"
+            ),
             Plan.from_json,
         )
 
     def get_plan(self, plan_id: str) -> Plan:
-        """Fetch a single plan by id."""
-        return Plan.from_json(self._get(f"/api/v1/plans/{plan_id}"))
+        """Fetch a single plan by id. PUBLIC — works before ``login()``."""
+        return Plan.from_json(self._get(f"/api/v1/plans/{plan_id}", auth="optional"))
 
     # -- subscriptions -----------------------------------------------------
 
@@ -251,19 +255,29 @@ class UbilltuClient:
         params = {"new_plan": new_plan} if new_plan else None
         return self._get(f"/api/v1/subscriptions/{subscription_id}/dry-run", params=params)
 
-    def cancel_subscription(self, subscription_id: str) -> dict:
-        """Cancel a subscription."""
-        return self._delete(f"/api/v1/subscriptions/{subscription_id}")
+    def cancel_subscription(
+        self, subscription_id: str, policy: Optional[str] = "END_OF_TERM"
+    ) -> dict:
+        """Cancel a subscription.
 
-    def pause_subscription(self, subscription_id: str) -> Subscription:
-        """Pause a subscription."""
-        return Subscription.from_json(
+        ``policy`` defaults to ``END_OF_TERM`` — the subscription keeps access
+        until the period ends and reads as "Cancelling" (reactivatable). Pass
+        ``"IMMEDIATE"`` to cancel now, or ``None`` to use the server default.
+        """
+        body = {"use_policy": policy} if policy else None
+        return self._request(
+            "DELETE", f"/api/v1/subscriptions/{subscription_id}", body=body
+        )
+
+    def pause_subscription(self, subscription_id: str) -> PauseResult:
+        """Pause a subscription (schedules pause at end of period)."""
+        return PauseResult.from_json(
             self._post(f"/api/v1/subscriptions/{subscription_id}/pause", {})
         )
 
-    def resume_subscription(self, subscription_id: str) -> Subscription:
+    def resume_subscription(self, subscription_id: str) -> PauseResult:
         """Resume a paused subscription."""
-        return Subscription.from_json(
+        return PauseResult.from_json(
             self._post(f"/api/v1/subscriptions/{subscription_id}/resume", {})
         )
 
@@ -352,7 +366,7 @@ class UbilltuClient:
 
     def validate_invite(self, code: str) -> InvitePreview:
         """Public preview of an invite code (no auth) — for a join page pre-login."""
-        r = self._request("GET", f"/api/v1/invite/{code}/validate", auth=False)
+        r = self._request("GET", f"/api/v1/invite/{code}/validate", auth="none")
         return InvitePreview.from_json(r.get("preview") or {})
 
     # -- payments ----------------------------------------------------------
@@ -455,24 +469,26 @@ class UbilltuClient:
 
     # -- internals ---------------------------------------------------------
 
-    def _headers(self, json: bool = False, auth: bool = True) -> dict:
+    def _headers(self, json: bool = False, auth: str = "required") -> dict:
+        """auth: "required" (attach token, raise if missing), "optional" (attach
+        if present), or "none" (never attach)."""
         h = {
             "X-Storefront-Slug": self.storefront_slug,
             "Accept": "application/json",
         }
         if json:
             h["Content-Type"] = "application/json"
-        if auth:
-            if not self.is_authenticated:
-                raise UbilltuAuthError()
-            assert self._tokens is not None
-            h["Authorization"] = f"Bearer {self._tokens.access_token}"
+        token = self._tokens.access_token if self.is_authenticated else None
+        if auth == "required" and not token:
+            raise UbilltuAuthError()
+        if auth != "none" and token:
+            h["Authorization"] = f"Bearer {token}"
         return h
 
-    def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        return self._request("GET", path, params=params)
+    def _get(self, path: str, params: Optional[dict] = None, auth: str = "required") -> dict:
+        return self._request("GET", path, params=params, auth=auth)
 
-    def _post(self, path: str, body: dict, auth: bool = True) -> dict:
+    def _post(self, path: str, body: dict, auth: str = "required") -> dict:
         return self._request("POST", path, body=body, auth=auth)
 
     def _put(self, path: str, body: dict) -> dict:
@@ -486,8 +502,9 @@ class UbilltuClient:
         method: str,
         path: str,
         body: Optional[dict] = None,
-        auth: bool = True,
+        auth: str = "required",
         params: Optional[dict] = None,
+        _retry: bool = True,
     ) -> dict:
         resp = self._http.request(
             method,
@@ -496,6 +513,23 @@ class UbilltuClient:
             json=body if body is not None else None,
             params=params,
         )
+        # Transparent refresh-once on 401 (docs recommend refresh-on-401).
+        if (
+            resp.status_code == 401
+            and _retry
+            and auth != "none"
+            and self._tokens is not None
+            and self._tokens.refresh_token
+        ):
+            try:
+                self.refresh()
+                refreshed = True
+            except Exception:
+                refreshed = False
+            if refreshed:
+                return self._request(
+                    method, path, body=body, auth=auth, params=params, _retry=False
+                )
         if resp.status_code // 100 != 2:
             self._raise(resp)
         if not resp.content:

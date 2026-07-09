@@ -301,6 +301,25 @@ class PaymentMethod:
 
 
 @dataclass
+class PauseResult:
+    """Result of a pause/resume (``{success, message, paused_until}``)."""
+
+    success: bool
+    message: Optional[str]
+    paused_until: Optional[str]
+    raw: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, r: dict) -> "PauseResult":
+        return cls(
+            success=bool(r.get("success")),
+            message=r.get("message"),
+            paused_until=_first(r, "paused_until", "pausedUntil"),
+            raw=r,
+        )
+
+
+@dataclass
 class AccountBalance:
     """Outstanding balance + available credit for the account."""
 
